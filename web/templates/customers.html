@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>مدیریت مشتریان</title>
+    <style>
+        body { font-family: Tahoma; background: #f4f4f4; padding: 20px; }
+        .container { max-width: 800px; margin: auto; background: white; padding: 20px; border-radius: 8px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: center; }
+        th { background: #2C3E50; color: white; }
+        .form-group { margin-bottom: 15px; }
+        input { padding: 8px; width: 200px; }
+        button { padding: 8px 20px; background: #27AE60; color: white; border: none; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>مدیریت مشتریان</h1>
+        <a href="/">بازگشت به داشبورد</a>
+        
+        <form action="/add_customer" method="post" style="margin-top: 20px; border: 1px solid #ddd; padding: 15px;">
+            <h3>افزودن مشتری جدید</h3>
+            <input type="text" name="name" placeholder="نام و نام خانوادگی" required>
+            <input type="text" name="c_code" placeholder="کد ملی" required>
+            <input type="text" name="phone" placeholder="تلفن">
+            <button type="submit">ثبت مشتری</button>
+        </form>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>کد ملی</th>
+                    <th>نام</th>
+                    <th>تلفن</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for c in customers %}
+                <tr>
+                    <td>{{ c.c_code }}</td>
+                    <td>{{ c.name }}</td>
+                    <td>{{ c.phone }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>
