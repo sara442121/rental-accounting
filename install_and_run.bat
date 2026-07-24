@@ -1,0 +1,9 @@
+@echo off
+echo در حال نصب پیش‌نیازهای برنامه حسابداری ابزارآلات...
+pip install flask pyinstaller
+echo در حال ساخت فایل اجرایی دسکتاپ...
+pyinstaller --onefile --windowed --name "ToolAccounting" desktop/main.py
+echo نصب با موفقیت انجام شد.
+echo در حال اجرای برنامه...
+start "" "dist\ToolAccounting.exe"
+pause
