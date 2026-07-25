@@ -11,7 +11,7 @@ def get_db_connection():
 def init_db():
     conn = get_db_connection()
     c = conn.cursor()
-    # Customers table
+    # Customers
     c.execute('''CREATE TABLE IF NOT EXISTS customers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         c_code TEXT UNIQUE,
@@ -19,29 +19,41 @@ def init_db():
         phone TEXT,
         photo_path TEXT
     )''')
-    # Tools/Items table
+    # Tools with Stock Management
     c.execute('''CREATE TABLE IF NOT EXISTS tools (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         code TEXT UNIQUE,
         name TEXT NOT NULL,
-        hourly_price REAL,
-        daily_price REAL,
-        weekly_price REAL,
-        monthly_price REAL,
-        late_fee_per_hour REAL DEFAULT 0,
-        status TEXT DEFAULT 'در انبار'
+        price_per_minute REAL DEFAULT 0,
+        daily_price REAL DEFAULT 0,
+        late_fee_per_minute REAL DEFAULT 0,
+        total_stock INTEGER DEFAULT 0,
+        current_stock INTEGER DEFAULT 0
     )''')
-    # Rentals table
+    # Rentals with Minute Precision and Shortage tracking
     c.execute('''CREATE TABLE IF NOT EXISTS rentals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         customer_id INTEGER,
         tool_id INTEGER,
+        quantity_out INTEGER DEFAULT 1,
+        quantity_in INTEGER DEFAULT 0,
+        shortage INTEGER DEFAULT 0,
         start_time TEXT,
         end_time_planned TEXT,
         actual_return_time TEXT,
-        period TEXT,
+        total_amount REAL DEFAULT 0,
+        status TEXT DEFAULT 'فعال', -- فعال, تسویه شده, پیش‌فاکتور
+        FOREIGN KEY (customer_id) REFERENCES customers(id),
+        FOREIGN KEY (tool_id) REFERENCES tools(id)
+    )''')
+    # Pre-invoices
+    c.execute('''CREATE TABLE IF NOT EXISTS pre_invoices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        customer_id INTEGER,
+        tool_id INTEGER,
+        date TEXT,
         amount REAL,
-        status TEXT DEFAULT 'فعال',
+        notes TEXT,
         FOREIGN KEY (customer_id) REFERENCES customers(id),
         FOREIGN KEY (tool_id) REFERENCES tools(id)
     )''')

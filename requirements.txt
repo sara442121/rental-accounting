@@ -2,3 +2,4 @@ flask
 pyinstaller
 reportlab
 openpyxl
+pandas
