@@ -3,3 +3,6 @@ pyinstaller
 reportlab
 openpyxl
 pandas
+matplotlib
+tabula-py
+jpype1

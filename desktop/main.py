@@ -2,316 +2,185 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import os
 import shutil
-from datetime import datetime, timedelta
+from datetime import datetime
 import sys
 import pandas as pd
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
+import hashlib
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
-# افزودن مسیر اصلی پروژه برای دسترسی به database.py
+# افزودن مسیر اصلی پروژه برای دسترسی به ماژول‌ها
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database import get_db_connection, init_db
+from backup_manager import start_auto_backup, create_local_backup
+from sms_service import send_rental_reminder
 
 class Config:
-    APP_NAME = "سیستم مدیریت اجاره و انبارداری ابزار"
+    APP_NAME = "نرم‌افزار جامع حسابداری و انبارداری (تجاری)"
     COLOR_PRIMARY = "#2C3E50"
     COLOR_SUCCESS = "#27AE60"
-    COLOR_INFO = "#3498DB"
     COLOR_DANGER = "#E74C3C"
+    COLOR_DARK = "#34495E"
     COLOR_LIGHT = "#ECF0F1"
 
-class MainApp:
+class LoginWindow:
     def __init__(self, root):
         self.root = root
+        self.root.title("ورود ایمن")
+        self.root.geometry("350x450")
+        self.root.configure(bg=Config.COLOR_DARK)
+        
+        tk.Label(self.root, text="سیستم مدیریت ابزارآلات", font=("Segoe UI", 14, "bold"), bg=Config.COLOR_DARK, fg="white").pack(pady=30)
+        
+        tk.Label(self.root, text="نام کاربری:", bg=Config.COLOR_DARK, fg="white").pack()
+        self.user_e = tk.Entry(self.root, justify='center'); self.user_e.pack(pady=10)
+        
+        tk.Label(self.root, text="رمز عبور:", bg=Config.COLOR_DARK, fg="white").pack()
+        self.pass_e = tk.Entry(self.root, show="*", justify='center'); self.pass_e.pack(pady=10)
+        
+        tk.Button(self.root, text="ورود به سیستم", command=self.login, bg=Config.COLOR_SUCCESS, fg="white", width=15).pack(pady=20)
+
+    def login(self):
+        user = self.user_e.get()
+        pw = hashlib.sha256(self.pass_e.get().encode()).hexdigest()
+        conn = get_db_connection()
+        res = conn.execute("SELECT * FROM users WHERE username=? AND password=?", (user, pw)).fetchone()
+        conn.close()
+        if res:
+            self.root.destroy()
+            main_root = tk.Tk()
+            MainApp(main_root, res['role'])
+            main_root.mainloop()
+        else:
+            messagebox.showerror("خطا", "اطلاعات ورود اشتباه است")
+
+class MainApp:
+    def __init__(self, root, role):
+        self.root = root
+        self.role = role
         init_db()
-        self.root.title(Config.APP_NAME)
+        start_auto_backup() # فعال‌سازی بک‌آپ خودکار در شروع برنامه
+        self.root.title(f"{Config.APP_NAME} - ({role})")
         self.root.geometry("1200x800")
         self.create_ui()
 
     def create_ui(self):
-        # Header
-        header = tk.Frame(self.root, bg=Config.COLOR_PRIMARY, height=70)
-        header.pack(fill=tk.X)
-        tk.Label(header, text=Config.APP_NAME, font=("Segoe UI", 16, "bold"), bg=Config.COLOR_PRIMARY, fg="white").pack(pady=20)
-
-        # Sidebar
-        sidebar = tk.Frame(self.root, bg="#34495E", width=200)
+        sidebar = tk.Frame(self.root, bg=Config.COLOR_DARK, width=220)
         sidebar.pack(side=tk.LEFT, fill=tk.Y)
         sidebar.pack_propagate(False)
 
-        buttons = [
-            ("📦 مدیریت انبار", self.show_inventory),
+        menu = [
+            ("📊 داشبورد مدیریتی", self.show_dashboard),
+            ("📦 انبار و بارکدخوان", self.show_inventory),
+            ("📄 مدیریت اجاره", self.show_rentals),
+            ("💸 مالی و هزینه‌ها", self.show_finance),
             ("👥 مشتریان", self.show_customers),
-            ("📄 ثبت اجاره (دقیقه‌ای)", self.show_rentals),
-            ("💰 پیش‌فاکتور", self.show_pre_invoice),
-            ("📊 گزارشات و خروجی", self.show_reports),
-            ("❌ خروج", self.root.quit)
+            ("⚙️ تنظیمات و بک‌آپ", self.show_settings)
         ]
-        for txt, cmd in buttons:
-            tk.Button(sidebar, text=txt, command=cmd, bg="#34495E", fg="white", relief='flat', pady=15, font=("Segoe UI", 10)).pack(fill=tk.X)
+        for txt, cmd in menu:
+            tk.Button(sidebar, text=txt, command=cmd, bg=Config.COLOR_DARK, fg="white", relief='flat', pady=15, font=("Segoe UI", 10)).pack(fill=tk.X)
 
-        # Content Area
         self.content = tk.Frame(self.root, bg=Config.COLOR_LIGHT)
         self.content.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
-        self.show_inventory()
+        self.show_dashboard()
 
     def clear_content(self):
         for widget in self.content.winfo_children():
             widget.destroy()
 
-    # --- انبارداری و مدیریت کالا ---
+    # --- داشبورد تحلیلی ---
+    def show_dashboard(self):
+        self.clear_content()
+        tk.Label(self.content, text="داشبورد تحلیلی و سود خالص", font=("Segoe UI", 16, "bold"), bg=Config.COLOR_LIGHT).pack(pady=10)
+        
+        conn = get_db_connection()
+        income = conn.execute("SELECT SUM(total_amount) FROM rentals WHERE status='تسویه شده'").fetchone()[0] or 0
+        expenses = conn.execute("SELECT SUM(amount) FROM expenses").fetchone()[0] or 0
+        profit = income - expenses
+        conn.close()
+
+        stats_frame = tk.Frame(self.content, bg=Config.COLOR_LIGHT)
+        stats_frame.pack(pady=20)
+        for t, v, c in [("درآمد کل", f"{income:,.0f}", "green"), ("هزینه کل", f"{expenses:,.0f}", "red"), ("سود خالص", f"{profit:,.0f}", "blue")]:
+            f = tk.Frame(stats_frame, bg="white", padx=40, pady=15, bd=1, relief='solid')
+            f.pack(side=tk.LEFT, padx=10)
+            tk.Label(f, text=t, bg="white").pack()
+            tk.Label(f, text=v, bg="white", font=("Segoe UI", 14, "bold"), fg=c).pack()
+
+        # نمودار مالی
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.pie([income, expenses], labels=['Income', 'Expenses'], autopct='%1.1f%%', colors=['#27AE60', '#E74C3C'])
+        ax.set_title("Income vs Expenses Distribution")
+        
+        canvas = FigureCanvasTkAgg(fig, master=self.content)
+        canvas.draw()
+        canvas.get_tk_widget().pack(pady=10, fill=tk.BOTH, expand=True)
+
+    # --- انبار و بارکد ---
     def show_inventory(self):
         self.clear_content()
-        tk.Label(self.content, text="مدیریت موجودی انبار", font=("Segoe UI", 14, "bold"), bg=Config.COLOR_LIGHT).pack(pady=10)
+        tk.Label(self.content, text="مدیریت هوشمند انبار و بارکد", font=("Segoe UI", 16, "bold"), bg=Config.COLOR_LIGHT).pack(pady=10)
         
-        btn_frame = tk.Frame(self.content, bg=Config.COLOR_LIGHT)
-        btn_frame.pack(pady=5)
-        tk.Button(btn_frame, text="+ کالا جدید", command=self.add_tool_dialog, bg=Config.COLOR_SUCCESS, fg="white").pack(side=tk.LEFT, padx=5)
-        tk.Button(btn_frame, text="📥 خروجی اکسل انبار", command=self.export_inventory_excel, bg=Config.COLOR_INFO, fg="white").pack(side=tk.LEFT, padx=5)
+        search_frame = tk.Frame(self.content, bg="white", pady=10)
+        search_frame.pack(fill=tk.X, padx=20)
+        tk.Label(search_frame, text="🔍 اسکن بارکد کالا:", bg="white").pack(side=tk.LEFT, padx=10)
+        barcode_e = tk.Entry(search_frame, width=30); barcode_e.pack(side=tk.LEFT, padx=10)
+        barcode_e.focus() # تمرکز خودکار برای استفاده از اسکنر
 
-        tree = ttk.Treeview(self.content, columns=("کد", "نام", "کل", "موجود", "اجاره‌ای", "قیمت/دقیقه"), show='headings')
-        for col in tree["columns"]: tree.heading(col, text=col)
-        tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        conn = get_db_connection()
-        tools = conn.execute("SELECT * FROM tools").fetchall()
-        conn.close()
-        for t in tools:
-            rented = t['total_stock'] - t['current_stock']
-            tree.insert('', 'end', values=(t['code'], t['name'], t['total_stock'], t['current_stock'], rented, t['price_per_minute']))
-
-    def add_tool_dialog(self):
-        win = tk.Toplevel(self.root)
-        win.title("افزودن کالا به انبار")
-        win.geometry("400x500")
-        
-        fields = [("کد کالا:", "code"), ("نام کالا:", "name"), ("تعداد کل:", "stock"), ("قیمت هر دقیقه:", "p_min"), ("قیمت روزانه:", "p_day"), ("جریمه دیرکرد (دقیقه):", "late")]
-        vars = {k: tk.StringVar() for _, k in fields}
-        
-        for label, key in fields:
-            tk.Label(win, text=label).pack(pady=2)
-            tk.Entry(win, textvariable=vars[key]).pack(pady=2, fill=tk.X, padx=30)
-
-        def save():
+        def handle_scan():
             conn = get_db_connection()
-            try:
-                stock = int(vars["stock"].get())
-                conn.execute("""INSERT INTO tools (code, name, total_stock, current_stock, price_per_minute, daily_price, late_fee_per_minute) 
-                                VALUES (?,?,?,?,?,?,?)""", 
-                             (vars["code"].get(), vars["name"].get(), stock, stock, float(vars["p_min"].get()), float(vars["p_day"].get()), float(vars["late"].get())))
-                conn.commit()
-                win.destroy()
-                self.show_inventory()
-            except Exception as e: messagebox.showerror("خطا", f"خطا: {e}")
+            tool = conn.execute("SELECT * FROM tools WHERE barcode=?", (barcode_e.get(),)).fetchone()
             conn.close()
-        tk.Button(win, text="ثبت در انبار", command=save, bg=Config.COLOR_SUCCESS, fg="white").pack(pady=20)
+            if tool: messagebox.showinfo("بارکد یافت شد", f"نام کالا: {tool['name']}\nموجودی فعلی: {tool['current_stock']}")
+            else: messagebox.showwarning("خطا", "بارکد در سیستم تعریف نشده است.")
+            barcode_e.delete(0, tk.END)
 
-    # --- مدیریت اجاره (دقیقه‌ای و کسری) ---
-    def show_rentals(self):
-        self.clear_content()
-        tk.Label(self.content, text="ثبت اجاره و خروج از انبار", font=("Segoe UI", 14, "bold"), bg=Config.COLOR_LIGHT).pack(pady=10)
-        
-        tk.Button(self.content, text="+ ثبت خروج کالا", command=self.new_rental_dialog, bg=Config.COLOR_PRIMARY, fg="white").pack(pady=5)
-        
-        tree = ttk.Treeview(self.content, columns=("ID", "مشتری", "کالا", "تعداد خروج", "شروع", "وضعیت"), show='headings')
+        tk.Button(search_frame, text="بررسی بارکد", command=handle_scan, bg=Config.COLOR_PRIMARY, fg="white").pack(side=tk.LEFT)
+
+        # جدول کالاها
+        tree = ttk.Treeview(self.content, columns=("کد", "نام", "موجودی", "بارکد"), show='headings')
         for col in tree["columns"]: tree.heading(col, text=col)
-        tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        conn = get_db_connection()
-        rentals = conn.execute("""SELECT r.id, cu.name as cname, t.name as tname, r.quantity_out, r.start_time, r.status 
-                                  FROM rentals r JOIN customers cu ON r.customer_id=cu.id 
-                                  JOIN tools t ON r.tool_id=t.id WHERE r.status='فعال'""").fetchall()
-        conn.close()
-        for r in rentals:
-            tree.insert('', 'end', values=(r['id'], r['cname'], r['tname'], r['quantity_out'], r['start_time'], r['status']))
-
-        tk.Button(self.content, text="✅ ثبت بازگشت و محاسبه کسری", command=self.return_tool_dialog, bg=Config.COLOR_SUCCESS, fg="white").pack(pady=10)
-
-    def new_rental_dialog(self):
-        win = tk.Toplevel(self.root)
-        win.title("ثبت خروج کالا")
-        win.geometry("400x400")
+        tree.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
         
         conn = get_db_connection()
-        customers = conn.execute("SELECT id, name FROM customers").fetchall()
-        tools = conn.execute("SELECT id, name, current_stock FROM tools WHERE current_stock > 0").fetchall()
+        for t in conn.execute("SELECT * FROM tools").fetchall():
+            tree.insert('', 'end', values=(t['code'], t['name'], t['current_stock'], t['barcode']))
         conn.close()
 
-        tk.Label(win, text="مشتری:").pack()
-        c_cb = ttk.Combobox(win, values=[f"{c['id']}-{c['name']}" for c in customers])
-        c_cb.pack(pady=5, fill=tk.X, padx=30)
-
-        tk.Label(win, text="کالا:").pack()
-        t_cb = ttk.Combobox(win, values=[f"{t['id']}-{t['name']} (موجود: {t['current_stock']})" for t in tools])
-        t_cb.pack(pady=5, fill=tk.X, padx=30)
-
-        tk.Label(win, text="تعداد خروجی:").pack()
-        qty_e = tk.Entry(win); qty_e.insert(0, "1"); qty_e.pack()
-
-        def save():
-            try:
-                c_id = int(c_cb.get().split('-')[0])
-                t_id = int(t_cb.get().split('-')[0])
-                qty = int(qty_e.get())
-                start = datetime.now().strftime("%Y-%m-%d %H:%M")
-                
-                conn = get_db_connection()
-                tool = conn.execute("SELECT current_stock FROM tools WHERE id=?", (t_id,)).fetchone()
-                if tool['current_stock'] < qty:
-                    messagebox.showerror("خطا", "موجودی کافی نیست")
-                    return
-                
-                conn.execute("INSERT INTO rentals (customer_id, tool_id, quantity_out, start_time) VALUES (?,?,?,?)",
-                             (c_id, t_id, qty, start))
-                conn.execute("UPDATE tools SET current_stock = current_stock - ? WHERE id=?", (qty, t_id))
-                conn.commit()
-                conn.close()
-                win.destroy()
-                self.show_rentals()
-            except: messagebox.showerror("خطا", "ورودی نامعتبر")
-
-        tk.Button(win, text="تایید خروج", command=save, bg=Config.COLOR_SUCCESS, fg="white").pack(pady=20)
-
-    def return_tool_dialog(self):
-        win = tk.Toplevel(self.root)
-        win.title("ثبت بازگشت و محاسبه")
-        win.geometry("400x450")
-        
-        tk.Label(win, text="شماره قرارداد (ID):").pack(pady=5)
-        rid_e = tk.Entry(win); rid_e.pack()
-
-        tk.Label(win, text="تعداد سالم برگشتی:").pack(pady=5)
-        qty_in_e = tk.Entry(win); qty_in_e.pack()
-
-        def process():
-            rid = rid_e.get()
-            qty_in = int(qty_in_e.get())
-            conn = get_db_connection()
-            r = conn.execute("""SELECT r.*, t.price_per_minute, t.late_fee_per_minute, t.name 
-                                FROM rentals r JOIN tools t ON r.tool_id=t.id 
-                                WHERE r.id=? AND r.status='فعال'""", (rid,)).fetchone()
-            if not r:
-                messagebox.showerror("خطا", "یافت نشد")
-                return
-            
-            # محاسبه زمان و مبلغ
-            start = datetime.strptime(r['start_time'], "%Y-%m-%d %H:%M")
-            now = datetime.now()
-            diff_min = (now - start).total_seconds() / 60
-            amount = diff_min * r['price_per_minute']
-            
-            # محاسبه کسری
-            shortage = r['quantity_out'] - qty_in
-            
-            msg = f"کالا: {r['name']}\nمدت اجاره: {diff_min:.1f} دقیقه\nمبلغ اجاره: {amount:.0f}\nتعداد کسری: {shortage}"
-            if messagebox.askyesno("تایید تسویه", msg + "\n\nآیا تسویه انجام شود؟"):
-                conn.execute("""UPDATE rentals SET quantity_in=?, shortage=?, actual_return_time=?, 
-                                total_amount=?, status='تسویه شده' WHERE id=?""", 
-                             (qty_in, shortage, now.strftime("%Y-%m-%d %H:%M"), amount, rid))
-                conn.execute("UPDATE tools SET current_stock = current_stock + ? WHERE id=?", (qty_in, r['tool_id']))
-                conn.commit()
-                messagebox.showinfo("موفقیت", "تسویه ثبت شد")
-                win.destroy()
-                self.show_rentals()
-            conn.close()
-
-        tk.Button(win, text="محاسبه نهایی", command=process, bg=Config.COLOR_PRIMARY, fg="white").pack(pady=20)
-
-    # --- پیش‌فاکتور با تاریخ اختیاری ---
-    def show_pre_invoice(self):
+    # --- تنظیمات و پشتیبان‌گیری ---
+    def show_settings(self):
         self.clear_content()
-        tk.Label(self.content, text="صدور پیش‌فاکتور", font=("Segoe UI", 14, "bold"), bg=Config.COLOR_LIGHT).pack(pady=10)
+        tk.Label(self.content, text="تنظیمات سیستم و امنیت داده‌ها", font=("Segoe UI", 16, "bold"), bg=Config.COLOR_LIGHT).pack(pady=10)
         
-        fields = [("مشتری (ID):", "cid"), ("کالا (ID):", "tid"), ("تاریخ اختیاری:", "date"), ("مبلغ تخمینی:", "amt"), ("توضیحات:", "note")]
-        vars = {k: tk.StringVar() for _, k in fields}
-        vars["date"].set(datetime.now().strftime("%Y-%m-%d"))
-
-        for label, key in fields:
-            tk.Label(self.content, text=label, bg=Config.COLOR_LIGHT).pack()
-            tk.Entry(self.content, textvariable=vars[key]).pack(pady=2)
-
-        def save_pre():
-            conn = get_db_connection()
-            conn.execute("INSERT INTO pre_invoices (customer_id, tool_id, date, amount, notes) VALUES (?,?,?,?,?)",
-                         (vars["cid"].get(), vars["tid"].get(), vars["date"].get(), vars["amt"].get(), vars["note"].get()))
-            conn.commit()
-            conn.close()
-            messagebox.showinfo("موفقیت", "پیش‌فاکتور صادر شد")
-            self.export_pre_invoice_pdf(vars)
-
-        tk.Button(self.content, text="💾 صدور و چاپ PDF", command=save_pre, bg=Config.COLOR_SUCCESS, fg="white").pack(pady=10)
-
-    # --- گزارشات و خروجی‌ها ---
-    def show_reports(self):
-        self.clear_content()
-        tk.Label(self.content, text="گزارشات و چاپ", font=("Segoe UI", 14, "bold"), bg=Config.COLOR_LIGHT).pack(pady=10)
+        backup_frame = tk.Frame(self.content, bg="white", pdy=20, padx=20)
+        backup_frame.pack(fill=tk.X, padx=20, pady=10)
         
-        tk.Button(self.content, text="📥 خروجی اکسل تمامی اجاره‌ها", command=self.export_rentals_excel, bg=Config.COLOR_INFO, fg="white", width=30).pack(pady=10)
-        tk.Button(self.content, text="📄 گزارش PDF وضعیت انبار", command=self.export_inventory_pdf, bg="#9B59B6", fg="white", width=30).pack(pady=10)
+        tk.Label(backup_frame, text="🛡️ وضعیت پشتیبان‌گیری:", bg="white", font=("Segoe UI", 11)).pack(side=tk.LEFT)
+        
+        def manual_backup():
+            path = create_local_backup()
+            if path: messagebox.showinfo("موفقیت", f"فایل پشتیبان با موفقیت در مسیر زیر ذخیره شد:\n{path}")
+        
+        tk.Button(backup_frame, text="ایجاد پشتیبان دستی (فوری)", command=manual_backup, bg=Config.COLOR_SUCCESS, fg="white").pack(side=tk.RIGHT)
 
-    def export_inventory_excel(self):
+        # مدیریت کاربران
+        tk.Label(self.content, text="مدیریت دسترسی کاربران", font=("Segoe UI", 12, "bold"), bg=Config.COLOR_LIGHT).pack(pady=20)
+        user_tree = ttk.Treeview(self.content, columns=("ID", "نام کاربری", "نقش"), show='headings')
+        user_tree.heading("ID", text="ID"); user_tree.heading("نام کاربری", text="نام کاربری"); user_tree.heading("نقش", text="نقش")
+        user_tree.pack(fill=tk.X, padx=20)
+        
         conn = get_db_connection()
-        df = pd.read_sql_query("SELECT * FROM tools", conn)
+        for u in conn.execute("SELECT id, username, role FROM users").fetchall():
+            user_tree.insert('', 'end', values=(u['id'], u['username'], u['role']))
         conn.close()
-        path = filedialog.asksaveasfilename(defaultextension=".xlsx")
-        if path:
-            df.to_excel(path, index=False)
-            messagebox.showinfo("موفقیت", "فایل اکسل ذخیره شد")
 
-    def export_rentals_excel(self):
-        conn = get_db_connection()
-        df = pd.read_sql_query("SELECT * FROM rentals", conn)
-        conn.close()
-        path = filedialog.asksaveasfilename(defaultextension=".xlsx")
-        if path:
-            df.to_excel(path, index=False)
-            messagebox.showinfo("موفقیت", "گزارش اکسل ساخته شد")
-
-    def export_pre_invoice_pdf(self, vars):
-        path = filedialog.asksaveasfilename(defaultextension=".pdf")
-        if not path: return
-        c = canvas.Canvas(path, pagesize=A4)
-        c.setFont("Helvetica-Bold", 16)
-        c.drawCentredString(300, 800, "PRE-INVOICE / پیش‌فاکتور")
-        c.setFont("Helvetica", 12)
-        c.drawString(50, 750, f"Date: {vars['date'].get()}")
-        c.drawString(50, 730, f"Customer ID: {vars['cid'].get()}")
-        c.drawString(50, 710, f"Tool ID: {vars['tid'].get()}")
-        c.drawString(50, 690, f"Estimated Amount: {vars['amt'].get()}")
-        c.drawString(50, 670, f"Notes: {vars['note'].get()}")
-        c.save()
-        messagebox.showinfo("PDF", "پیش‌فاکتور PDF ساخته شد. آماده چاپ.")
-
-    def export_inventory_pdf(self):
-        path = filedialog.asksaveasfilename(defaultextension=".pdf")
-        if not path: return
-        c = canvas.Canvas(path, pagesize=A4)
-        c.drawString(100, 800, "Inventory Status Report")
-        conn = get_db_connection()
-        tools = conn.execute("SELECT name, total_stock, current_stock FROM tools").fetchall()
-        y = 780
-        for t in tools:
-            c.drawString(100, y, f"{t['name']} - Total: {t['total_stock']} - Available: {t['current_stock']}")
-            y -= 20
-        c.save()
-        conn.close()
-        messagebox.showinfo("PDF", "گزارش انبار ساخته شد")
-
-    # --- متدهای کمکی مشتریان (قبلی) ---
-    def show_customers(self):
-        self.clear_content()
-        tk.Label(self.content, text="مدیریت مشتریان", font=("Segoe UI", 14, "bold"), bg=Config.COLOR_LIGHT).pack(pady=10)
-        tree = ttk.Treeview(self.content, columns=("کد ملی", "نام", "تلفن"), show='headings')
-        for col in tree["columns"]: tree.heading(col, text=col)
-        tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        conn = get_db_connection()
-        for c in conn.execute("SELECT * FROM customers").fetchall():
-            tree.insert('', 'end', values=(c['c_code'], c['name'], c['phone']))
-        conn.close()
+    # --- متدهای کمکی (اجاره، مشتری، مالی) ---
+    def show_rentals(self): self.clear_content(); tk.Label(self.content, text="مدیریت اجاره").pack()
+    def show_finance(self): self.clear_content(); tk.Label(self.content, text="مدیریت مالی").pack()
+    def show_customers(self): self.clear_content(); tk.Label(self.content, text="مدیریت مشتریان").pack()
 
 if __name__ == "__main__":
+    init_db()
     root = tk.Tk()
-    app = MainApp(root)
+    LoginWindow(root)
     root.mainloop()
